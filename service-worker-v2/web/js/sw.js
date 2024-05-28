@@ -16,13 +16,16 @@
 // Com isto o browser deteta e faz restart ao service worker, mas não faz um rerun da instalação e ativação do mesmo
 
 // Valor para nós podermos dizer ao browser que temos código novo no service worker é atualizado. Na realidade basta alterar 1 byte no código
-const version = 1;
+const version = 2;
+var isOnline = true;
+var isLoggedIn = false;
 
 self.addEventListener("install", onInstall);
 self.addEventListener("activate", onActivate);
+self.addEventListener("message", onMessage);
 
 async function main() {
-    console.log(`Service Worker (${version}) is starting...`);
+    await sendMessage({ requestStatusUpdate: true });
 }
 
 main().catch(console.error);
@@ -32,7 +35,24 @@ async function onInstall(evt) {
     self.skipWaiting(); // Com isto forçamos a que qualquer versão nova do service worker vai ficar running neste momento
 }
 
-// Teste commie
+async function sendMessage(msg) {
+    var allClients = await clients.matchAll({ includeUncontrolled: true });
+
+    return Promise.all(
+        allClients.map(function clientMsg(client) {
+            var chan = new MessageChannel();
+            chan.port1.onMessage = onMessage;
+            return client.postMessage(msg, [chan.port2]);
+        })
+    );
+}
+
+function onMessage({ data }) {
+    if (data.statusUpdate) {
+        var { isOnline, isLoggedIn } = data.statusUpdate;
+        console.log(`Service Worker (v${version}) status update, isOnline: ${isOnline}, isLoggedIn: ${isLoggedIn}`);
+    }
+}
 
 async function onActivate(evt) {
     // Com este código o browser não vai terminar o service worker até que a Promise passada seja resolvida ou rejeitada
