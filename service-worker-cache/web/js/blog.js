@@ -78,7 +78,13 @@
             sendStatusUpdate(svcWorker);
         });
 
-        navigator.serviceWorker.controller.addEventListener("message", onSWMessage);
+        // Check if the service worker is controlling the page
+        if (navigator.serviceWorker.controller) {
+            // Add event listener for messages from the service worker
+            navigator.serviceWorker.controller.addEventListener("message", onSWMessage);
+        } else {
+            console.log("No service worker is controlling the page.");
+        }
     }
 
     // No caso em que a página morreu e o service worker voltou à vida precisamos de avisar o mesmo do estado da aplicação.

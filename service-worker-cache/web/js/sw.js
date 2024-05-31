@@ -16,9 +16,15 @@
 // Com isto o browser deteta e faz restart ao service worker, mas não faz um rerun da instalação e ativação do mesmo
 
 // Valor para nós podermos dizer ao browser que temos código novo no service worker é atualizado. Na realidade basta alterar 1 byte no código
-const version = 2;
+const version = 6;
 var isOnline = true;
 var isLoggedIn = false;
+var cacheName = `ramblings-${version}`;
+
+// Vamso colocar em cache os urls que queremos carregar quandoe estivermos em offline
+var urlsToCache = {
+    loggedOut: ["", "/about", "/contact", "/404", "/login", "/offline", "/js/blog.js", "/js/home.js", "/js/login.js", "/js/add-post.js", "/css/style.css", "/images/logo.gif", "/images/offline.png"],
+};
 
 self.addEventListener("install", onInstall);
 self.addEventListener("activate", onActivate);
@@ -26,6 +32,7 @@ self.addEventListener("message", onMessage);
 
 async function main() {
     await sendMessage({ requestStatusUpdate: true });
+    await cacheLoggedOutFiles();
 }
 
 main().catch(console.error);
@@ -65,11 +72,81 @@ async function onActivate(evt) {
 // Podemos ter o cenário em que temos 3 tabs da nossa app aberta, e atualizamos o service worker.
 // Apenas aquela que está ativa ia perceber que o service worker tinha sido atualizado.
 async function handleActivation() {
+    // Quando trabalhamos com cache estamos a usar cache referente à versão do service worker.
+    // Quando ativamos uma nova versão do service worker, verificamos que vai ser criada uma nova cache com base na versão do novo service worker
+    // Por isso devemos limpar todas as versões antigas da cache
+    // Porque não fazemos na instalação? Porque pode haver outro service worker a mexer na cache na mesma altura
+    await clearCaches();
+
+    // Aqui é a ativação do nosso service worker, e aqui queremos que a nossa cache seja atualizada com todos os novos valores
+    await cacheLoggedOutFiles(true);
+
     // Portanto usamos o clients.claim(), que é um método que permite colocar o service worker como controller de todos os clientes no seu escopo.
     // O que acaba por fazer é trigger ao evento controllerchange no navigator.serviceWorker em qualquer cliente controlado por este service worker.
     // Quando o service worker foi registado inicialmente as páginas não o usam até ao seu próximo load.
     // O método claim() causa que essas páginas passem a ser controladas pelo service worker.
     // Assim todos os clientes que o usam começam a usar a nova versão do service worker a interceptar pedidos sem o user ter de fazer reload à página
     clients.claim();
+
     console.log(`Service Worker (${version}) activated.`);
+}
+
+// Vamos apenas limpar a cache do nosso service worker, nunca tod aa cache porque podem existir outras aplicações que façam cache na nossa app também
+async function clearCaches() {
+    var cacheNames = await caches.keys();
+    console.log("Current cache names:", cacheNames);
+
+    var oldCacheNames = cacheNames.filter(function matchOldCache(cacheName) {
+        if (/^ramblings-\d+$/.test(cacheName)) {
+            let [, cacheVersion] = cacheName.match(/^ramblings-(\d+)$/);
+            cacheVersion = cacheVersion != null ? Number(cacheVersion) : cacheVersion;
+
+            return cacheVersion > 0 && cacheVersion != version;
+        }
+    });
+
+    console.log("Caches to delete:", oldCacheNames);
+
+    return Promise.all(
+        oldCacheNames.map(function deleteCache(cacheName) {
+            return caches.delete(cacheName).then((deleted) => console.log(`Cache ${cacheName} deleted:`, deleted));
+        })
+    );
+}
+
+async function cacheLoggedOutFiles(forceReload = false) {
+    var cache = await caches.open(cacheName);
+
+    return Promise.all(
+        urlsToCache.loggedOut.map(async function requestFile(url) {
+            try {
+                let res;
+
+                // Se tivermos alguma coisa na cache, retornamos
+                if (!forceReload) {
+                    res = await cache.match(url);
+
+                    if (res) {
+                        return res;
+                    }
+                }
+
+                // Se não tivermos o recurso em cache queremos ir buscá-lo.
+                // Colocamos aqui no-cache porque não queremos que o browser coloque em cache este resultado
+                let fetchOptions = {
+                    method: "GET",
+                    credentials: "omit",
+                    cache: "no-cache",
+                };
+
+                res = await fetch(url, fetchOptions);
+
+                if (res.ok) {
+                    // Porque usamos um clone da resposta?
+                    // Uma resposta deve ser usada para um só propósito, e se colocarmos em cache e retornamos na mesma função vamos ter erros estranhos de headers não fechados. Então devemos sempre colocar um clone da resposta na cache
+                    await cache.put(url, res.clone());
+                }
+            } catch (err) {}
+        })
+    );
 }
